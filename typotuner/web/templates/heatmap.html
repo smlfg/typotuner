@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Heatmap — TypoTuner{% endblock %}
+{% block nav_heatmap %}active{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Keyboard Heatmap</h2>
+
+<!-- View Toggle -->
+<div class="flex gap-2 mb-6">
+    <button onclick="setView('error')" id="btn-error" class="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm">Error Rate</button>
+    <button onclick="setView('dwell')" id="btn-dwell" class="px-4 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">Dwell Time</button>
+    <button onclick="setView('presses')" id="btn-presses" class="px-4 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">Presses</button>
+    <button onclick="setView('fingers')" id="btn-fingers" class="px-4 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">Fingers</button>
+</div>
+
+<!-- SVG Keyboard -->
+<div class="card overflow-x-auto">
+    <svg id="keyboard" viewBox="0 0 780 260" class="w-full max-w-4xl" xmlns="http://www.w3.org/2000/svg">
+        <style>
+            .key { stroke: #475569; stroke-width: 1.5; cursor: pointer; transition: fill 0.2s; }
+            .key:hover { stroke: #e2e8f0; stroke-width: 2; }
+            .key-label { fill: #e2e8f0; font-size: 12px; font-family: monospace; pointer-events: none; text-anchor: middle; dominant-baseline: central; }
+        </style>
+    </svg>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip" class="fixed hidden bg-slate-700 text-white text-sm p-3 rounded-lg shadow-xl border border-slate-600 z-50 pointer-events-none">
+</div>
+
+<!-- Legend -->
+<div class="flex gap-4 mt-4 text-sm text-slate-400" id="legend-error">
+    <span class="flex items-center gap-1"><span class="w-4 h-4 rounded inline-block" style="background:#4ade80"></span> &lt;2%</span>
+    <span class="flex items-center gap-1"><span class="w-4 h-4 rounded inline-block" style="background:#fbbf24"></span> 2-5%</span>
+    <span class="flex items-center gap-1"><span class="w-4 h-4 rounded inline-block" style="background:#fb923c"></span> 5-8%</span>
+    <span class="flex items-center gap-1"><span class="w-4 h-4 rounded inline-block" style="background:#f87171"></span> &gt;8%</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// QWERTZ keyboard layout — [key_code, label, x]
+const ROWS = [
+    // Number row
+    [[41,"^",0], [2,"1",52], [3,"2",104], [4,"3",156], [5,"4",208], [6,"5",260], [7,"6",312], [8,"7",364], [9,"8",416], [10,"9",468], [11,"0",520], [12,"ß",572], [13,"´",624]],
+    // Top row QWERTZ
+    [[16,"Q",26], [17,"W",78], [18,"E",130], [19,"R",182], [20,"T",234], [21,"Z",286], [22,"U",338], [23,"I",390], [24,"O",442], [25,"P",494], [26,"Ü",546], [27,"+",598]],
+    // Home row
+    [[30,"A",36], [31,"S",88], [32,"D",140], [33,"F",192], [34,"G",244], [35,"H",296], [36,"J",348], [37,"K",400], [38,"L",452], [39,"Ö",504], [40,"Ä",556], [43,"#",608]],
+    // Bottom row
+    [[86,"<",10], [44,"Y",62], [45,"X",114], [46,"C",166], [47,"V",218], [48,"B",270], [49,"N",322], [50,"M",374], [51,",",426], [52,".",478], [53,"-",530]]
+];
+
+const FINGER_COLORS = {
+    'left_pinky': '#a78bfa', 'left_ring': '#60a5fa', 'left_middle': '#34d399',
+    'left_index': '#fbbf24', 'thumb': '#94a3b8',
+    'right_index': '#fbbf24', 'right_middle': '#34d399', 'right_ring': '#60a5fa',
+    'right_pinky': '#a78bfa'
+};
+
+// Finger map injected from Python (key_code -> {finger, label})
+const FINGER_MAP = {
+    {% for code, info in finger_map.items() %}
+    {{ code }}: { finger: "{{ info[0] }}", label: "{{ info[1] }}" },
+    {% endfor %}
+};
+
+let keyData = {};
+let currentView = 'error';
+
+function errorColor(rate) {
+    if (rate >= 0.08) return '#f87171';
+    if (rate >= 0.05) return '#fb923c';
+    if (rate >= 0.02) return '#fbbf24';
+    return '#4ade80';
+}
+
+function dwellColor(ms) {
+    if (ms >= 120) return '#f87171';
+    if (ms >= 80) return '#fb923c';
+    if (ms >= 50) return '#fbbf24';
+    return '#4ade80';
+}
+
+function pressesColor(count, maxCount) {
+    const ratio = maxCount > 0 ? count / maxCount : 0;
+    const r = Math.round(30 + ratio * 100);
+    const g = Math.round(41 + ratio * 80);
+    const b = Math.round(59 + ratio * 120);
+    return `rgb(${r},${g},${b})`;
+}
+
+function getKeyColor(code) {
+    const d = keyData[code] || {};
+    const fm = FINGER_MAP[code] || {};
+    if (currentView === 'fingers') return FINGER_COLORS[fm.finger] || '#334155';
+    if (!d.total_presses) return '#334155';
+    if (currentView === 'error') return errorColor(d.error_rate_ema || 0);
+    if (currentView === 'dwell') return dwellColor(d.dwell_ema || 0);
+    if (currentView === 'presses') {
+        const max = Math.max(...Object.values(keyData).map(k => k.total_presses || 0), 1);
+        return pressesColor(d.total_presses || 0, max);
+    }
+    return '#334155';
+}
+
+function buildKeyboard() {
+    const svg = document.getElementById('keyboard');
+    // Remove all children except <style>
+    Array.from(svg.children).forEach(child => {
+        if (child.tagName !== 'style') svg.removeChild(child);
+    });
+
+    const KW = 46, KH = 46, PAD = 4;
+    ROWS.forEach((row, ri) => {
+        const y = ri * (KH + PAD) + 10;
+        row.forEach(([code, label, x]) => {
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('class', 'key');
+            rect.setAttribute('x', x + 10);
+            rect.setAttribute('y', y);
+            rect.setAttribute('width', KW);
+            rect.setAttribute('height', KH);
+            rect.setAttribute('rx', 6);
+            rect.setAttribute('data-code', code);
+            rect.setAttribute('fill', getKeyColor(code));
+
+            rect.addEventListener('mouseenter', (e) => showTooltip(e, code, label));
+            rect.addEventListener('mouseleave', hideTooltip);
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('class', 'key-label');
+            text.setAttribute('x', x + 10 + KW / 2);
+            text.setAttribute('y', y + KH / 2);
+            text.textContent = label;
+
+            svg.appendChild(rect);
+            svg.appendChild(text);
+        });
+    });
+}
+
+function showTooltip(e, code, label) {
+    const tip = document.getElementById('tooltip');
+    const d = keyData[code] || {};
+    const fm = FINGER_MAP[code] || {};
+    const finger = (fm.finger || 'unknown').replace(/_/g, ' ');
+    const ema = ((d.error_rate_ema || 0) * 100).toFixed(1);
+    const dwell = (d.dwell_ema || 0).toFixed(0);
+    const presses = d.total_presses || 0;
+
+    tip.innerHTML = `
+        <strong>${label}</strong> <span class="text-slate-400">(${finger})</span><br>
+        Error: ${ema}% &middot; Dwell: ${dwell}ms &middot; Presses: ${presses}
+    `;
+    tip.style.left = (e.clientX + 12) + 'px';
+    tip.style.top = (e.clientY - 10) + 'px';
+    tip.classList.remove('hidden');
+}
+
+function hideTooltip() {
+    document.getElementById('tooltip').classList.add('hidden');
+}
+
+function setView(view) {
+    currentView = view;
+    document.querySelectorAll('[id^="btn-"]').forEach(b => {
+        b.className = b.id === 'btn-' + view
+            ? 'px-4 py-2 rounded-lg bg-brand-600 text-white text-sm'
+            : 'px-4 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm';
+    });
+    document.querySelectorAll('.key').forEach(rect => {
+        const code = parseInt(rect.getAttribute('data-code'));
+        rect.setAttribute('fill', getKeyColor(code));
+    });
+}
+
+// Load data and build keyboard
+fetch('/api/heatmap-data')
+    .then(r => r.json())
+    .then(data => {
+        keyData = data;
+        buildKeyboard();
+    })
+    .catch(() => buildKeyboard());
+</script>
+{% endblock %}

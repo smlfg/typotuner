@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Recommendations — TypoTuner{% endblock %}
+{% block nav_recs %}active{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Actuation Recommendations</h2>
+<p class="text-slate-400 mb-6">SteelSeries Apex Pro TKL — Per-key actuation point suggestions based on your typing data.</p>
+
+{% if not recommendations %}
+<div class="card text-center text-slate-400 py-12">
+    <p class="text-lg mb-2">Not enough data yet.</p>
+    <p class="text-sm">Need at least 3 completed sessions and significant typing data.</p>
+</div>
+{% else %}
+<div class="card overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-slate-400 border-b border-slate-700">
+                <th class="text-left py-3">Key</th>
+                <th class="text-right py-3">Current</th>
+                <th class="text-center py-3"></th>
+                <th class="text-right py-3">Recommended</th>
+                <th class="text-right py-3">Confidence</th>
+                <th class="text-left py-3 pl-4">Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in recommendations %}
+            <tr class="border-b border-slate-700/50 hover:bg-slate-700/30">
+                <td class="py-3 font-mono font-bold text-lg">{{ r.key_name }}</td>
+                <td class="py-3 text-right text-slate-400">{{ "%.1f"|format(r.current_mm) }}mm</td>
+                <td class="py-3 text-center text-xl">
+                    {% if r.recommended_mm > r.current_mm %}
+                        <span class="text-orange-400">&#8593;</span>
+                    {% else %}
+                        <span class="text-blue-400">&#8595;</span>
+                    {% endif %}
+                </td>
+                <td class="py-3 text-right font-bold text-cyan-400">{{ "%.1f"|format(r.recommended_mm) }}mm</td>
+                <td class="py-3 text-right">
+                    <div class="flex items-center justify-end gap-2">
+                        <div class="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full {% if r.confidence > 0.7 %}bg-green-400{% elif r.confidence > 0.4 %}bg-yellow-400{% else %}bg-red-400{% endif %}"
+                                 style="width: {{ (r.confidence * 100)|int }}%"></div>
+                        </div>
+                        <span class="text-slate-400 text-xs">{{ (r.confidence * 100)|int }}%</span>
+                    </div>
+                </td>
+                <td class="py-3 pl-4 text-slate-300 text-xs">{{ r.reason }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="mt-4 text-sm text-slate-500">
+    <p>&#8593; = increase actuation point (less sensitive, prevents accidental presses)</p>
+    <p>&#8595; = decrease actuation point (more sensitive, easier to press)</p>
+    <p class="mt-2">Range: 0.1mm &mdash; 4.0mm (40 steps on SteelSeries Apex Pro TKL)</p>
+</div>
+{% endif %}
+{% endblock %}

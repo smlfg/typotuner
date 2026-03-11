@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Finger Analysis — TypoTuner{% endblock %}
+{% block nav_fingers %}active{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Finger Analysis</h2>
+
+{% if not finger_stats %}
+<div class="card text-center text-slate-400 py-12">
+    <p class="text-lg">No data yet. Start the daemon and type!</p>
+</div>
+{% else %}
+
+<!-- Left vs Right Comparison -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+    <div class="card">
+        <h3 class="text-lg font-semibold mb-2">Left Hand</h3>
+        {% set ns = namespace(presses=0, errors=0) %}
+        {% for name in finger_names if name.startswith('left') %}
+            {% if name in finger_stats %}
+                {% set ns.presses = ns.presses + finger_stats[name].total_presses %}
+                {% set ns.errors = ns.errors + finger_stats[name].total_errors %}
+            {% endif %}
+        {% endfor %}
+        <p class="text-3xl font-bold">{{ "{:,}".format(ns.presses) }}</p>
+        <p class="text-sm text-slate-400">{{ ns.errors }} errors ({{ "%.1f"|format(ns.errors / ns.presses * 100 if ns.presses > 0 else 0) }}%)</p>
+    </div>
+    <div class="card">
+        <h3 class="text-lg font-semibold mb-2">Right Hand</h3>
+        {% set ns = namespace(presses=0, errors=0) %}
+        {% for name in finger_names if name.startswith('right') %}
+            {% if name in finger_stats %}
+                {% set ns.presses = ns.presses + finger_stats[name].total_presses %}
+                {% set ns.errors = ns.errors + finger_stats[name].total_errors %}
+            {% endif %}
+        {% endfor %}
+        <p class="text-3xl font-bold">{{ "{:,}".format(ns.presses) }}</p>
+        <p class="text-sm text-slate-400">{{ ns.errors }} errors ({{ "%.1f"|format(ns.errors / ns.presses * 100 if ns.presses > 0 else 0) }}%)</p>
+    </div>
+</div>
+
+<!-- Finger Chart -->
+<div class="card mb-8">
+    <h3 class="text-lg font-semibold mb-4">Error Rate by Finger</h3>
+    <canvas id="fingerChart" height="200"></canvas>
+</div>
+
+<!-- Finger Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for name in finger_names %}
+    {% if name in finger_stats %}
+    {% set fs = finger_stats[name] %}
+    {% set rate = fs.total_errors / fs.total_presses if fs.total_presses > 0 else 0 %}
+    <div class="card">
+        <div class="flex justify-between items-start mb-3">
+            <h4 class="font-semibold">{{ name.replace('_', ' ').title() }}</h4>
+            <span class="text-sm px-2 py-1 rounded {% if rate > 0.08 %}bg-red-900/50 text-red-400{% elif rate > 0.05 %}bg-orange-900/50 text-orange-400{% elif rate > 0.02 %}bg-yellow-900/50 text-yellow-400{% else %}bg-green-900/50 text-green-400{% endif %}">
+                {{ "%.1f"|format(rate * 100) }}%
+            </span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+            <div>
+                <p class="text-slate-400">Presses</p>
+                <p class="font-bold">{{ "{:,}".format(fs.total_presses) }}</p>
+            </div>
+            <div>
+                <p class="text-slate-400">Errors</p>
+                <p class="font-bold text-red-400">{{ fs.total_errors }}</p>
+            </div>
+        </div>
+        {% if fs.worst_key %}
+        <div class="mt-3 pt-3 border-t border-slate-700 text-sm">
+            <span class="text-slate-400">Worst key:</span>
+            <span class="font-mono font-bold text-red-400">{{ fs.worst_key }}</span>
+            <span class="text-slate-500">({{ "%.1f"|format(fs.worst_error_rate * 100) }}%)</span>
+        </div>
+        {% endif %}
+        <div class="mt-2 text-xs text-slate-500">
+            Keys: {% for s in fs['keys'] %}{{ s['key_name'] }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/finger-stats')
+    .then(r => r.json())
+    .then(data => {
+        const labels = Object.keys(data).map(f => f.replace(/_/g, ' '));
+        const rates = Object.values(data).map(d => (d.error_rate * 100).toFixed(1));
+        const colors = rates.map(r => r > 8 ? '#f87171' : r > 5 ? '#fb923c' : r > 2 ? '#fbbf24' : '#4ade80');
+
+        new Chart(document.getElementById('fingerChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Error Rate %',
+                    data: rates,
+                    backgroundColor: colors,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#94a3b8', callback: v => v + '%' },
+                        grid: { color: '#334155' }
+                    },
+                    x: {
+                        ticks: { color: '#94a3b8', maxRotation: 45 },
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}
