@@ -127,7 +127,7 @@ Filter: min_sessions >= 3
 
 | Phase | Was | Status |
 |-------|-----|--------|
-| **Phase 1 (MVP)** | Daemon + Analyse + Heatmap + CLI + Web + Empfehlungen | IN PROGRESS |
+| **Phase 1 (MVP)** | Daemon + Analyse + Heatmap + CLI + Web + Empfehlungen | DONE (MVP) |
 | **Phase 2** | HID Reverse Engineering (Wireshark + Windows VM) | Blocked: Keyboard nicht da |
 | **Phase 3** | Auto-Adjustment via HID SET_REPORT | Nach Phase 2 |
 
