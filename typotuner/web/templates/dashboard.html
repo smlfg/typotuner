@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — TypoTuner{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Dashboard</h2>
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <div class="card">
+        <p class="text-sm text-slate-400">Total Presses</p>
+        <p class="text-3xl font-bold mt-2">{{ "{:,}".format(total_presses) }}</p>
+    </div>
+    <div class="card">
+        <p class="text-sm text-slate-400">Total Errors</p>
+        <p class="text-3xl font-bold mt-2 text-red-400">{{ "{:,}".format(total_errors) }}</p>
+    </div>
+    <div class="card">
+        <p class="text-sm text-slate-400">Error Rate</p>
+        <p class="text-3xl font-bold mt-2 {% if error_rate > 0.08 %}text-red-400{% elif error_rate > 0.05 %}text-orange-400{% elif error_rate > 0.02 %}text-yellow-400{% else %}text-green-400{% endif %}">
+            {{ "%.1f"|format(error_rate * 100) }}%
+        </p>
+    </div>
+    <div class="card">
+        <p class="text-sm text-slate-400">Sessions</p>
+        <p class="text-3xl font-bold mt-2">{{ sessions|length }}</p>
+    </div>
+</div>
+
+<!-- Typo Types -->
+{% if typo_summary %}
+<div class="card mb-8">
+    <h3 class="text-lg font-semibold mb-4">Error Types</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {% for etype, count in typo_summary.items() %}
+        <div class="text-center">
+            <p class="text-2xl font-bold">{{ count }}</p>
+            <p class="text-sm text-slate-400">{{ etype }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Top Error Keys -->
+{% if top_errors %}
+<div class="card mb-8">
+    <h3 class="text-lg font-semibold mb-4">Highest Error Rate Keys</h3>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-slate-400 border-b border-slate-700">
+                    <th class="text-left py-2">Key</th>
+                    <th class="text-left py-2">Finger</th>
+                    <th class="text-right py-2">Presses</th>
+                    <th class="text-right py-2">Error EMA</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in top_errors %}
+                <tr class="border-b border-slate-700/50">
+                    <td class="py-2 font-mono font-bold">{{ s.key_name }}</td>
+                    <td class="py-2 text-slate-400">{{ (s.finger or "?") | replace("_", " ") | title }}</td>
+                    <td class="py-2 text-right">{{ s.total_presses }}</td>
+                    <td class="py-2 text-right {% if s.error_rate_ema > 0.08 %}text-red-400{% elif s.error_rate_ema > 0.05 %}text-orange-400{% elif s.error_rate_ema > 0.02 %}text-yellow-400{% else %}text-green-400{% endif %}">
+                        {{ "%.1f"|format(s.error_rate_ema * 100) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Finger Chart -->
+<div class="card">
+    <h3 class="text-lg font-semibold mb-4">Error Rate by Finger</h3>
+    <canvas id="fingerChart" height="200"></canvas>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/finger-stats')
+    .then(r => r.json())
+    .then(data => {
+        const labels = Object.keys(data).map(f => f.replace('_', ' '));
+        const rates = Object.values(data).map(d => (d.error_rate * 100).toFixed(1));
+        const colors = rates.map(r => r > 8 ? '#f87171' : r > 5 ? '#fb923c' : r > 2 ? '#fbbf24' : '#4ade80');
+
+        new Chart(document.getElementById('fingerChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Error Rate %',
+                    data: rates,
+                    backgroundColor: colors,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#94a3b8', callback: v => v + '%' },
+                        grid: { color: '#334155' }
+                    },
+                    x: {
+                        ticks: { color: '#94a3b8', maxRotation: 45 },
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}
