@@ -1,0 +1,13 @@
+[Unit]
+Description=TypoTuner Web Dashboard
+After=network.target typotuner.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/typotuner web --port 8070
+Restart=on-failure
+RestartSec=5
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
