@@ -78,7 +78,6 @@ class Storage:
         self._conn = sqlite3.connect(
             str(self._path),
             check_same_thread=False,
-            detect_types=sqlite3.PARSE_DECLTYPES,
         )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -91,6 +90,7 @@ class Storage:
                         flight_ms: float = 0.0, is_error: bool = False) -> None:
         """Record a keypress, updating running stats with EMA."""
         now = datetime.now()
+        now_iso = now.isoformat()
         today = now.strftime("%Y-%m-%d")
         key_name = qwertz.get_label(key_code) or f"KEY_{key_code}"
         finger = qwertz.get_finger(key_code)
@@ -118,7 +118,7 @@ class Storage:
                      1 if is_error else 0,
                      error_ema, dwell_ms, dwell_ema_val, flight_ms,
                      1 if is_error else 0,
-                     today, now, now),
+                     today, now_iso, now_iso),
                 )
             else:
                 total = row["total_presses"] + 1
@@ -147,7 +147,7 @@ class Storage:
                        WHERE key_code = ?""",
                     (total, errors, new_error_ema, new_avg_dwell,
                      new_dwell_ema, new_avg_flight,
-                     daily_p, daily_e, today, now, key_code),
+                     daily_p, daily_e, today, now_iso, key_code),
                 )
             self._conn.commit()
 
@@ -186,12 +186,12 @@ class Storage:
     def record_typo(self, error_key: int, intended_key: int | None,
                     correction_ms: int, error_type: str) -> None:
         """Record a typo event. Maintains ring buffer of max TYPO_RING_BUFFER_SIZE."""
-        now = datetime.now()
+        now_iso = datetime.now().isoformat()
         with self._lock:
             self._conn.execute(
                 """INSERT INTO typo_events (timestamp, error_key_code, intended_key,
                    correction_ms, error_type) VALUES (?, ?, ?, ?, ?)""",
-                (now, error_key, intended_key, correction_ms, error_type),
+                (now_iso, error_key, intended_key, correction_ms, error_type),
             )
             # Trim ring buffer
             self._conn.execute(
@@ -221,22 +221,22 @@ class Storage:
 
     def start_session(self, device_name: str) -> int:
         """Start a new daemon session, return session ID."""
-        now = datetime.now()
+        now_iso = datetime.now().isoformat()
         with self._lock:
             cursor = self._conn.execute(
                 "INSERT INTO sessions (started_at, device_name) VALUES (?, ?)",
-                (now, device_name),
+                (now_iso, device_name),
             )
             self._conn.commit()
             return cursor.lastrowid
 
     def end_session(self, session_id: int, total_keys: int, total_errors: int) -> None:
         """End a daemon session."""
-        now = datetime.now()
+        now_iso = datetime.now().isoformat()
         with self._lock:
             self._conn.execute(
                 "UPDATE sessions SET ended_at = ?, total_keys = ?, total_errors = ? WHERE id = ?",
-                (now, total_keys, total_errors, session_id),
+                (now_iso, total_keys, total_errors, session_id),
             )
             self._conn.commit()
 
@@ -260,7 +260,7 @@ class Storage:
 
     def save_recommendations(self, recs: list[dict]) -> None:
         """Save/update actuation recommendations."""
-        now = datetime.now()
+        now_iso = datetime.now().isoformat()
         with self._lock:
             for r in recs:
                 self._conn.execute(
@@ -269,7 +269,7 @@ class Storage:
                         confidence, generated_at, applied)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
                     (r["key_code"], r["key_name"], r.get("current_mm", 2.0),
-                     r["recommended_mm"], r["reason"], r["confidence"], now),
+                     r["recommended_mm"], r["reason"], r["confidence"], now_iso),
                 )
             self._conn.commit()
 
