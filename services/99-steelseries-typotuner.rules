@@ -1,0 +1,4 @@
+# TypoTuner — allow access to SteelSeries Apex Pro TKL 2023 HID interfaces
+# Install: sudo cp 99-steelseries-typotuner.rules /etc/udev/rules.d/
+# Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1628", MODE="0660", GROUP="input"

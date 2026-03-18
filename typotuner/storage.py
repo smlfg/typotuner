@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS recommendations (
     generated_at    TIMESTAMP,
     applied         INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS actuation_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    key_code        INTEGER NOT NULL,
+    previous_mm     REAL NOT NULL,
+    new_mm          REAL NOT NULL,
+    source          TEXT NOT NULL,
+    persisted       INTEGER DEFAULT 0
+);
 """
 
 TYPO_RING_BUFFER_SIZE = 10_000
@@ -281,6 +291,36 @@ class Storage:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # --- Actuation History ---
+
+    def record_actuation_change(
+        self,
+        key_code: int,
+        previous_mm: float,
+        new_mm: float,
+        source: str = "auto",
+        persisted: bool = False,
+    ) -> None:
+        """Record an actuation change for audit trail."""
+        now_iso = datetime.now().isoformat()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO actuation_history
+                   (timestamp, key_code, previous_mm, new_mm, source, persisted)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (now_iso, key_code, previous_mm, new_mm, source, 1 if persisted else 0),
+            )
+            self._conn.commit()
+
+    def get_actuation_history(self, limit: int = 50) -> list[dict]:
+        """Get recent actuation changes."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM actuation_history ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # --- Utility ---
 
     def reset(self) -> None:
@@ -290,6 +330,7 @@ class Storage:
             self._conn.execute("DELETE FROM typo_events")
             self._conn.execute("DELETE FROM sessions")
             self._conn.execute("DELETE FROM recommendations")
+            self._conn.execute("DELETE FROM actuation_history")
             self._conn.commit()
 
     def close(self) -> None:
