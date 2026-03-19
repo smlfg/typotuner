@@ -394,3 +394,164 @@ class TestGetActuationHistory:
         tmp_db.record_actuation_change(30, 2.0, 1.5)
         tmp_db.reset()
         assert tmp_db.get_actuation_history() == []
+
+
+# ── oled.py ─────────────────────────────────────────────────────────────
+
+
+class TestOledConstants:
+    def test_dimensions(self):
+        from typotuner.hid.oled import OLED_WIDTH, OLED_HEIGHT, OLED_DATA_SIZE
+        assert OLED_WIDTH == 128
+        assert OLED_HEIGHT == 40
+        assert OLED_DATA_SIZE == 640
+        assert OLED_WIDTH * OLED_HEIGHT // 8 == OLED_DATA_SIZE
+
+    def test_report_size(self):
+        from typotuner.hid.oled import OLED_REPORT_SIZE, OLED_DATA_SIZE
+        # report_id(1) + cmd(1) + bitmap(640) + trailing(1) = 643
+        assert OLED_REPORT_SIZE == 643
+        assert OLED_REPORT_SIZE == 1 + 1 + OLED_DATA_SIZE + 1
+
+    def test_protocol_constants(self):
+        from typotuner.hid.oled import OLED_CMD, OLED_REPORT_ID
+        assert OLED_CMD == 0x61
+        assert OLED_REPORT_ID == 0x00
+
+
+class TestSendImage:
+    def test_correct_report_format(self):
+        """Verify the report sent to set_feature has correct structure."""
+        from typotuner.hid import oled
+
+        captured = {}
+
+        def mock_set_feature(fd, data):
+            captured["fd"] = fd
+            captured["data"] = data
+
+        with patch.object(oled.device, "set_feature", mock_set_feature):
+            bitmap = bytes(range(256)) * 2 + bytes(range(128))  # 640 bytes
+            oled.send_image(42, bitmap)
+
+        assert captured["fd"] == 42
+        data = captured["data"]
+        assert len(data) == 643
+        assert data[0] == 0x00  # report ID
+        assert data[1] == 0x61  # OLED command byte
+        assert data[2 : 2 + 640] == bitmap  # bitmap payload
+        assert data[-1] == 0x00  # trailing byte
+
+    def test_wrong_size_raises(self):
+        from typotuner.hid import oled
+
+        with pytest.raises(ValueError, match="640 bytes"):
+            oled.send_image(42, bytes(100))
+
+    def test_empty_raises(self):
+        from typotuner.hid import oled
+
+        with pytest.raises(ValueError, match="640 bytes"):
+            oled.send_image(42, b"")
+
+    def test_too_large_raises(self):
+        from typotuner.hid import oled
+
+        with pytest.raises(ValueError, match="640 bytes"):
+            oled.send_image(42, bytes(641))
+
+
+class TestClearScreen:
+    def test_sends_zero_bitmap(self):
+        from typotuner.hid import oled
+
+        captured = {}
+
+        def mock_set_feature(fd, data):
+            captured["data"] = data
+
+        with patch.object(oled.device, "set_feature", mock_set_feature):
+            oled.clear_screen(42)
+
+        data = captured["data"]
+        assert len(data) == 643
+        assert data[0] == 0x00  # report ID
+        assert data[1] == 0x61  # command
+        assert data[2:-1] == bytes(640)  # all zeros = clear
+        assert data[-1] == 0x00
+
+
+class TestRenderText:
+    def test_returns_correct_size(self):
+        from typotuner.hid.oled import render_text, OLED_DATA_SIZE
+        bitmap = render_text("Hello")
+        assert len(bitmap) == OLED_DATA_SIZE
+
+    def test_nonempty_for_text(self):
+        from typotuner.hid.oled import render_text
+        bitmap = render_text("Test")
+        assert bitmap != bytes(640)  # should have some pixels set
+
+    def test_empty_string_is_blank(self):
+        from typotuner.hid.oled import render_text
+        bitmap = render_text("")
+        assert bitmap == bytes(640)
+
+    def test_custom_font_size(self):
+        from typotuner.hid.oled import render_text, OLED_DATA_SIZE
+        bitmap = render_text("X", font_size=10)
+        assert len(bitmap) == OLED_DATA_SIZE
+
+
+class TestRenderMultiline:
+    def test_returns_correct_size(self):
+        from typotuner.hid.oled import render_multiline, OLED_DATA_SIZE
+        bitmap = render_multiline(["Line 1", "Line 2"])
+        assert len(bitmap) == OLED_DATA_SIZE
+
+    def test_nonempty_for_text(self):
+        from typotuner.hid.oled import render_multiline
+        bitmap = render_multiline(["Hello", "World"])
+        assert bitmap != bytes(640)
+
+    def test_empty_lines(self):
+        from typotuner.hid.oled import render_multiline
+        bitmap = render_multiline([])
+        assert bitmap == bytes(640)
+
+    def test_many_lines_truncated(self):
+        from typotuner.hid.oled import render_multiline, OLED_DATA_SIZE
+        # More lines than can fit in 40px height
+        lines = [f"Line {i}" for i in range(20)]
+        bitmap = render_multiline(lines, font_size=12)
+        assert len(bitmap) == OLED_DATA_SIZE
+
+
+class TestImageToBitmap:
+    def test_correct_size(self):
+        from PIL import Image
+        from typotuner.hid.oled import image_to_bitmap, OLED_DATA_SIZE
+        img = Image.new("RGB", (256, 80), color=(255, 255, 255))
+        bitmap = image_to_bitmap(img)
+        assert len(bitmap) == OLED_DATA_SIZE
+
+    def test_black_image(self):
+        from PIL import Image
+        from typotuner.hid.oled import image_to_bitmap
+        img = Image.new("1", (128, 40), color=0)
+        bitmap = image_to_bitmap(img)
+        assert bitmap == bytes(640)
+
+    def test_white_image(self):
+        from PIL import Image
+        from typotuner.hid.oled import image_to_bitmap
+        img = Image.new("1", (128, 40), color=1)
+        bitmap = image_to_bitmap(img)
+        assert bitmap == bytes([0xFF] * 640)
+
+    def test_resizes_from_larger(self):
+        from PIL import Image
+        from typotuner.hid.oled import image_to_bitmap, OLED_DATA_SIZE
+        img = Image.new("L", (1920, 1080), color=128)
+        bitmap = image_to_bitmap(img)
+        assert len(bitmap) == OLED_DATA_SIZE

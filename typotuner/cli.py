@@ -518,3 +518,187 @@ def factory_reset(persist: bool):
     mode = "RAM + Flash" if persist else "RAM only"
     console.print(f"[green]All keys reset to 2.0mm ({mode}).[/green]")
     console.print(f"[dim]Backup: {backup}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: OLED Display Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def oled():
+    """OLED display control for the keyboard screen."""
+    pass
+
+
+@oled.command("text")
+@click.argument("message")
+@click.option("--size", default=16, help="Font size in pixels")
+def oled_text(message: str, size: int):
+    """Display text on the OLED screen."""
+    from .hid import device, oled
+
+    try:
+        path = device.find_device()
+        fd = device.open_device(path)
+    except (device.DeviceNotFoundError, device.DevicePermissionError) as e:
+        console.print(f"[red]{e}[/red]")
+        return
+
+    try:
+        bitmap = oled.render_text(message, font_size=size)
+        oled.send_image(fd, bitmap)
+        console.print(f"[green]Sent text to OLED: {message!r}[/green]")
+    except Exception as e:
+        console.print(f"[red]OLED error: {e}[/red]")
+    finally:
+        device.close_device(fd)
+
+
+@oled.command("clear")
+def oled_clear():
+    """Clear the OLED screen."""
+    from .hid import device, oled
+
+    try:
+        path = device.find_device()
+        fd = device.open_device(path)
+    except (device.DeviceNotFoundError, device.DevicePermissionError) as e:
+        console.print(f"[red]{e}[/red]")
+        return
+
+    try:
+        oled.clear_screen(fd)
+        console.print("[green]OLED cleared.[/green]")
+    except Exception as e:
+        console.print(f"[red]OLED error: {e}[/red]")
+    finally:
+        device.close_device(fd)
+
+
+@oled.command("dashboard")
+@click.option("--daemon", is_flag=True, help="Run as rotating dashboard (Ctrl+C to stop)")
+@click.option("--interval", default=3, help="Seconds between screen rotations")
+def oled_dashboard(daemon: bool, interval: int):
+    """Show system status on the OLED screen."""
+    from .hid import device, oled
+    from time import sleep
+
+    try:
+        path = device.find_device()
+        fd = device.open_device(path)
+    except (device.DeviceNotFoundError, device.DevicePermissionError) as e:
+        console.print(f"[red]{e}[/red]")
+        return
+
+    screens = [
+        ("CPU/RAM", _screen_cpu_ram),
+        ("Clock", _screen_clock),
+        ("Git", _screen_git_branch),
+        ("Claude", _screen_claude_sessions),
+    ]
+
+    try:
+        if not daemon:
+            # One-shot: show all screens briefly
+            for name, screen_fn in screens:
+                lines = screen_fn()
+                bitmap = oled.render_multiline(lines, font_size=12)
+                oled.send_image(fd, bitmap)
+                console.print(f"[dim]Screen: {name}[/dim]")
+                sleep(interval)
+            oled.clear_screen(fd)
+            return
+
+        # Daemon mode: rotate forever
+        console.print("[green]OLED dashboard running (Ctrl+C to stop)...[/green]")
+        idx = 0
+        while True:
+            name, screen_fn = screens[idx % len(screens)]
+            lines = screen_fn()
+            bitmap = oled.render_multiline(lines, font_size=12)
+            oled.send_image(fd, bitmap)
+            idx += 1
+            sleep(interval)
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopping dashboard...[/dim]")
+    except Exception as e:
+        console.print(f"[red]OLED error: {e}[/red]")
+    finally:
+        try:
+            oled.clear_screen(fd)
+        except OSError:
+            pass
+        device.close_device(fd)
+
+
+# ── OLED Dashboard Screens ─────────────────────────────────────────────
+
+
+def _screen_cpu_ram() -> list[str]:
+    """CPU and RAM usage screen."""
+    import psutil
+
+    cpu = psutil.cpu_percent(interval=0.5)
+    mem = psutil.virtual_memory()
+    lines = [
+        f"CPU: {cpu:5.1f}%",
+        f"RAM: {mem.percent:5.1f}%  {mem.used // (1024**3)}G/{mem.total // (1024**3)}G",
+    ]
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            for entries in temps.values():
+                if entries:
+                    lines.append(f"Temp: {entries[0].current:.0f} C")
+                    break
+    except (AttributeError, StopIteration):
+        pass
+    return lines
+
+
+def _screen_clock() -> list[str]:
+    """Clock and date screen."""
+    from datetime import datetime
+
+    now = datetime.now()
+    return [
+        now.strftime("%H:%M:%S"),
+        now.strftime("%A"),
+        now.strftime("%d.%m.%Y"),
+    ]
+
+
+def _screen_git_branch() -> list[str]:
+    """Git branch and status screen."""
+    import subprocess
+
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            text=True,
+            timeout=2,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status_out = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            text=True,
+            timeout=2,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = "dirty" if status_out else "clean"
+        return [f"Git: {branch}", f"Status: {dirty}"]
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return ["Git: N/A"]
+
+
+def _screen_claude_sessions() -> list[str]:
+    """Count Claude Code sessions screen."""
+    from pathlib import Path
+
+    claude_dir = Path.home() / ".claude" / "projects"
+    if not claude_dir.exists():
+        return ["Claude: no data"]
+    sessions = list(claude_dir.rglob("*.jsonl"))
+    return [f"Claude Sessions", f"  {len(sessions)} total"]
